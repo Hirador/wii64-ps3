@@ -30,6 +30,9 @@
 #include "Invalid_Code.h"
 #include "Recomp-Cache.h"
 #include "ARAM-blocks.h"
+#ifdef PS3
+#include "ExecMem-PS3.h"
+#endif
 
 typedef struct _meta_node {
 	unsigned int  addr;
@@ -307,17 +310,30 @@ void RecompCache_Link(PowerPC_func* src_func, PowerPC_instr* src_instr,
 //	end_section(LINK_SECTION);
 }
 
-void RecompCache_Init(void){
+int RecompCache_Init(void){
 	if(!cache){
+		void* codeMem;
+#ifdef PS3
+		/* The recompiler branches into this buffer, so it cannot come from
+		   malloc: GameOS maps the process heap non-executable and the jump
+		   into a recompiled block hard-locks the console. Ask PS3MAPI for a
+		   genuinely executable mapping instead. Returns NULL without CFW/HEN,
+		   in which case the caller must fall back to the interpreter -- the
+		   alternative is the hard lock this whole exercise is about. */
+		codeMem = ExecMem_Alloc(RECOMP_CACHE_SIZE);
+		if(!codeMem) return -1;
+#else
+		codeMem = malloc(RECOMP_CACHE_SIZE);
+#endif
 		cache = malloc(sizeof(heap_cntrl));
-		heapInit(cache, malloc(RECOMP_CACHE_SIZE),
-		                RECOMP_CACHE_SIZE);
+		heapInit(cache, codeMem, RECOMP_CACHE_SIZE);
 	}
 	if(!meta_cache){
 		meta_cache = malloc(sizeof(heap_cntrl));
     	heapInit(meta_cache, malloc(1*1024*1024),
 		                1*1024*1024);
 	}
+	return 0;
 }
 
 void* MetaCache_Alloc(unsigned int size){

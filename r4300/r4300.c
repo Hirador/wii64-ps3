@@ -37,6 +37,11 @@
 #include "recomp.h"
 #include "Invalid_Code.h"
 #include "ppc/Recompile.h"
+#ifdef PPC_DYNAREC
+/* Needed for RecompCache_Init's real prototype: go() acts on its return value,
+   and an implicit declaration would only happen to work. */
+#include "Recomp-Cache.h"
+#endif
 #include <malloc.h>
 #include <sysutil/sysutil.h>
 R4300 r4300;
@@ -233,7 +238,18 @@ void go()
 		dynacore = 1;
 		//printf("dynamic recompiler\n");
 		if(cpu_inited) {
-			RecompCache_Init();
+			if(RecompCache_Init()) {
+				/* No executable memory, so the recompiler has nowhere safe to
+				   emit to. Branching into a non-executable heap is what locks
+				   the console solid, so drop to the interpreter instead of
+				   attempting it. On PS3 this means PS3MAPI is unavailable:
+				   the console needs Cobra/Mamba 8.4+ or PS3HEN. */
+				dynacore = 2;
+				interpcore = 1;
+				pure_interpreter();
+				debug_count += Count;
+				return;
+			}
 			init_blocks();
 			cpu_inited = 0;
 		}

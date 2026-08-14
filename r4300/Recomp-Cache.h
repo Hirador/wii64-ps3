@@ -26,6 +26,11 @@
 // Hold 16MB worth of recompiled data max on PS3
 #define RECOMP_CACHE_SIZE (16*1024*1024)
 
+// Set up the recompiled-code and metadata heaps.
+// Returns 0 on success, non-zero if executable memory could not be obtained --
+// on PS3 that means no PS3MAPI, and the caller must use the interpreter.
+int RecompCache_Init(void);
+
 // Allocate and free memory to be used for recompiled code
 //   Any memory allocated this way can be freed at any time
 //   you must check invalid_code before you can access it
