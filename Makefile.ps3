@@ -17,6 +17,19 @@ include $(PSL1GHT)/ppu_rules
 #---------------------------------------------------------------------------------
 #TARGET		:=	$(notdir $(CURDIR))
 TARGET		:=	ps364_glN64
+
+# Package identity, used by `make -f Makefile.ps3 pkg`. ppu_rules defaults these
+# with ?=, so assigning here overrides them. APPID must be 9 alphanumeric
+# characters -- the PS3 silently rewrites the install directory otherwise.
+TITLE		:=	Wii64 PS3
+APPID		:=	WII640001
+CONTENTID	:=	UP0001-$(APPID)_00-0000000000000000
+
+# ppu_rules builds EBOOT.BIN with make_self_npdrm, which retail-signs and needs
+# key material the toolchain does not ship -- it segfaults on real input rather
+# than reporting the missing keys. Homebrew wants a fake-signed NPDRM self
+# anyway, which is what fself.py produces and what HEN/CFW will load.
+SELF_NPDRM	:=	fself.py --npdrm
 BUILD		:=	build
 SOURCES		:=	gc_audio gc_input gc_memory rsp_hle glN64_GX r4300 r4300/ppc main main/debug fileBrowser libgui menu
 DATA		:=	data
@@ -27,11 +40,23 @@ INCLUDES	:=
 # options for code generation
 #---------------------------------------------------------------------------------
 
-CFLAGS		= -g -O2 -Wall -mcpu=cell $(MACHDEP) $(INCLUDE) \
+# Add -DSHOW_DEBUG for on-screen debug output.
+COMMONFLAGS	= -g -O2 -Wall -mcpu=cell $(MACHDEP) $(INCLUDE) \
 			-fno-exceptions -Wno-unused-parameter -pipe -DUSE_EXPANSION -D__BIG_ENDIAN__ \
-			-DPPC -D__PPC__ -D_BIG_ENDIAN -DPS3 -D__LINUX__ -DPPC_DYNAREC -DUSE_RECOMP_CACHE #-DSHOW_DEBUG #-DWII -DHW_RVL
-	  
-CXXFLAGS	=	$(CFLAGS)
+			-DPPC -D__PPC__ -D_BIG_ENDIAN -DPS3 -D__LINUX__ -DPPC_DYNAREC -DUSE_RECOMP_CACHE
+
+# -fgnu89-inline: this codebase predates C99 inline semantics. It defines
+# functions such as invalid_code_get/set and blocks_get/set as a bare `inline`
+# in a .c file and declares them `inline` in the matching header. Under GCC's
+# default gnu11 that emits no externally visible definition, so linking fails
+# with ~50 undefined references. GNU89 semantics emit the out-of-line copy the
+# code expects. C only -- GCC rejects this option for C++.
+CFLAGS		=	$(COMMONFLAGS) -fgnu89-inline
+
+# -Wno-narrowing: PSL1GHT's vectormath/cpp/quat_aos.h brace-initialises
+# 0x80000000 into a signed vec_int4, which GCC 7's default gnu++14 rejects as a
+# narrowing conversion. The header is out of our control, so demote it.
+CXXFLAGS	=	$(COMMONFLAGS) -Wno-narrowing
 
 LDFLAGS		=	$(MACHDEP) -Wl,-Map,$(notdir $@).map
 
@@ -107,7 +132,7 @@ export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib) \
 					-L$(PORTLIBS)/lib
 
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
-.PHONY: $(BUILD) clean
+.PHONY: $(BUILD) clean pkg
 
 #---------------------------------------------------------------------------------
 $(BUILD):
@@ -117,11 +142,33 @@ $(BUILD):
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(OUTPUT).elf $(OUTPUT).self
+	@rm -fr $(BUILD) $(OUTPUT).elf $(OUTPUT).self $(OUTPUT)*.pkg
 
 #---------------------------------------------------------------------------------
 run:
 	ps3load $(OUTPUT).self
+
+#---------------------------------------------------------------------------------
+# Build an installable package.
+#
+# This deliberately does NOT use the %.pkg rule from ppu_rules. That rule feeds
+# fself/make_self_npdrm from $(BUILDDIR)/$(TARGET).elf, which is only a side
+# effect of the %.self rule -- so whenever the .self is already up to date the
+# strip step is skipped, the input file never appears, and the pkg is built with
+# no EBOOT.BIN in it. It still exits 0, producing a ~15K package that installs
+# and does nothing. Doing the steps here keeps the inputs explicit.
+pkg: $(BUILD)
+	@echo building pkg ... $(TARGET).pkg
+	@mkdir -p $(BUILD)/pkg/USRDIR
+	@cp $(ICON0) $(BUILD)/pkg/ICON0.PNG
+	@$(STRIP) $(OUTPUT).elf -o $(BUILD)/$(TARGET).stripped.elf
+	@$(SPRX) $(BUILD)/$(TARGET).stripped.elf
+	@$(SELF_NPDRM) $(BUILD)/$(TARGET).stripped.elf $(BUILD)/pkg/USRDIR/EBOOT.BIN
+	@$(SFO) --title "$(TITLE)" --appid "$(APPID)" -f $(SFOXML) $(BUILD)/pkg/PARAM.SFO
+	@$(PKG) --contentid $(CONTENTID) $(BUILD)/pkg/ $(OUTPUT).pkg
+	@test -s $(BUILD)/pkg/USRDIR/EBOOT.BIN \
+		|| { echo "FATAL: EBOOT.BIN is empty or missing"; exit 1; }
+	@echo "  EBOOT.BIN $$(stat -c%s $(BUILD)/pkg/USRDIR/EBOOT.BIN) bytes"
 
 
 #---------------------------------------------------------------------------------
