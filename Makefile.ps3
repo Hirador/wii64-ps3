@@ -109,9 +109,13 @@ else
 	export LD	:=	$(CXX)
 endif
 
+# Exported so the sub-make can depend on the shader objects; CPPFILES and
+# friends only exist in this branch.
+export SHADER_OFILES	:=	$(addsuffix .o,$(VPOFILES)) \
+					$(addsuffix .o,$(FPOFILES))
+
 export OFILES	:=	$(addsuffix .o,$(BINFILES)) \
-					$(addsuffix .o,$(VPOFILES)) \
-					$(addsuffix .o,$(FPOFILES)) \
+					$(SHADER_OFILES) \
 					$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) \
 					$(sFILES:.s=.o) $(SFILES:.S=.o)
 
@@ -184,6 +188,14 @@ DEPENDS	:=	$(OFILES:.o=.d)
 #---------------------------------------------------------------------------------
 $(OUTPUT).self: $(OUTPUT).elf
 $(OUTPUT).elf:	$(OFILES)
+
+# The Cg shaders are turned into objects by bin2o, which also emits the
+# combined_shader_vpo.h / combined_shader_fpo.h that OpenGL.h and the libgui
+# renderers include. Nothing expressed that dependency, so a parallel build
+# could compile those sources before the headers existed and fail with
+# "combined_shader_vpo.h: No such file or directory". It only ever worked
+# because the build was accidentally serial.
+$(filter-out $(SHADER_OFILES),$(OFILES)): $(SHADER_OFILES)
 
 #---------------------------------------------------------------------------------
 # This rule links in binary data with the .bin extension

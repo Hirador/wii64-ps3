@@ -420,7 +420,14 @@ int main(int argc, char* argv[]){
 	}
 #endif
 	running = 1;
-	while (menu->isRunning() && running) {}
+	// Yield in the menu loop. Without this the thread never blocks and simply
+	// monopolises the PPU, starving the system's own threads -- the XMB slows
+	// to a crawl, the pad service stops delivering input and sysutil cannot be
+	// serviced. Credit to Fancy2209, who found the same thing independently in
+	// emukidid/wii64-ps3#2 ("have actual yield on menu so it doesn't kill
+	// Cell"). Complements the SYS_PROCESS_PARAM priority declaration above:
+	// that stops us outranking system threads, this actually gives the CPU up.
+	while (menu->isRunning() && running) { usleep(200); }
 
 	delete menu;
 

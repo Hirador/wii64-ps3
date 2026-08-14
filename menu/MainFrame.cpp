@@ -100,8 +100,24 @@ struct ButtonInfo
 
 MainFrame::MainFrame()
 {
+	// InputStatusBar is ruinously expensive on the RSX: it calls
+	// IplFont::drawInit() for the ROM text and then again inside a four
+	// iteration loop over the controllers, and each of those invalidates the
+	// texture cache and reloads the fragment program -- a GPU pipeline flush
+	// every time. Fancy2209 measured this as the reason MainFrame ran at
+	// 1.7 FPS in emukidid/wii64-ps3#2 and disabled it on PS3; our own frame
+	// profiling independently put ~3.5s of GPU time per frame in this screen.
+	// Disabled rather than fixed for now -- the batching rework belongs with
+	// the wider GCM renderer work in that PR.
+#ifndef PS3
 	inputStatusBar = new menu::InputStatusBar(450,100);
 	add(inputStatusBar);
+#else
+	// Must still be NULLed: ~MainFrame() unconditionally deletes this, and the
+	// member is a raw pointer, so leaving it uninitialised would delete a
+	// garbage address. `delete NULL` is a no-op, so the destructor is fine.
+	inputStatusBar = NULL;
+#endif
 
 	for (int i = 0; i < NUM_MAIN_BUTTONS; i++)
 		FRAME_BUTTONS[i].button = new menu::Button(FRAME_BUTTONS[i].buttonStyle, &FRAME_BUTTONS[i].buttonString, 
