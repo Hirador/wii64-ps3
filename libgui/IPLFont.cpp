@@ -459,27 +459,39 @@ void IplFont::drawInit(GXColor fontColor)
 
 	//Reset params from gfx plugin (TODO..)
 
-	//init_shader
-	if (fp_buffer)
-		rsxFree(fp_buffer);
+	// Set the shader up once, not on every call.
+	//
+	// drawInit() is invoked per UI element per frame -- every Button, TextBox,
+	// MessageBox, LoadingBar and InputStatusBar entry calls it before drawing
+	// its label. On the Wii's GX this function was only cheap state-setting,
+	// but the RSX port made it free and reallocate the fragment-shader buffer
+	// in RSX memory and memcpy the ucode back in. That turned a menu with a
+	// dozen labels into a dozen rsxFree/rsxMemalign cycles per frame, which is
+	// what dragged the menu down to a fraction of a frame per second.
+	//
+	// None of this varies between calls: the shader objects are static data
+	// and fpsize is constant, so the buffer stays valid for the process
+	// lifetime. The per-call work that genuinely does change -- the font
+	// colour, texture binding and draw state -- is left below.
+	if (!fp_buffer) {
+		vpo = (rsxVertexProgram*)combined_shader_vpo;
+		fpo = (rsxFragmentProgram*)combined_shader_fpo;
 
-	vpo = (rsxVertexProgram*)combined_shader_vpo;
-	fpo = (rsxFragmentProgram*)combined_shader_fpo;
+		vp_ucode = rsxVertexProgramGetUCode(vpo);
+		projMatrix_id = rsxVertexProgramGetConst(vpo,"projMatrix");
+		modelViewMatrix_id = rsxVertexProgramGetConst(vpo,"modelViewMatrix");
+		vertexPosition_id = rsxVertexProgramGetAttrib(vpo,"vertexPosition");
+		vertexColor0_id = rsxVertexProgramGetAttrib(vpo,"vertexColor");
+		vertexTexcoord_id = rsxVertexProgramGetAttrib(vpo,"vertexTexcoord");
 
-	vp_ucode = rsxVertexProgramGetUCode(vpo);
-	projMatrix_id = rsxVertexProgramGetConst(vpo,"projMatrix");
-	modelViewMatrix_id = rsxVertexProgramGetConst(vpo,"modelViewMatrix");
-	vertexPosition_id = rsxVertexProgramGetAttrib(vpo,"vertexPosition");
-	vertexColor0_id = rsxVertexProgramGetAttrib(vpo,"vertexColor");
-	vertexTexcoord_id = rsxVertexProgramGetAttrib(vpo,"vertexTexcoord");
+		fp_ucode = rsxFragmentProgramGetUCode(fpo,&fpsize);
+		fp_buffer = (u32*)rsxMemalign(64,fpsize);
+		memcpy(fp_buffer,fp_ucode,fpsize);
+		rsxAddressToOffset(fp_buffer,&fp_offset);
 
-	fp_ucode = rsxFragmentProgramGetUCode(fpo,&fpsize);
-	fp_buffer = (u32*)rsxMemalign(64,fpsize);
-	memcpy(fp_buffer,fp_ucode,fpsize);
-	rsxAddressToOffset(fp_buffer,&fp_offset);
-
-	mode_id = rsxFragmentProgramGetConst(fpo,"mode");
-	textureUnit_id = rsxFragmentProgramGetAttrib(fpo,"texture");
+		mode_id = rsxFragmentProgramGetConst(fpo,"mode");
+		textureUnit_id = rsxFragmentProgramGetAttrib(fpo,"texture");
+	}
 
 	//Init font texture
 	rsxInvalidateTextureCache(context,GCM_INVALIDATE_TEXTURE);
