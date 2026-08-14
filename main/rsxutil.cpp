@@ -21,6 +21,7 @@
 
 #define VIDEO_OUT_BUFFER_FORMAT_XRGB VIDEO_BUFFER_FORMAT_XRGB
 #endif
+#include <sysutil/sysutil.h>
 
 #include "rsxutil.h"
 
@@ -175,6 +176,17 @@ void init_screen(void *host_addr,u32 size)
 
 void flip()
 {
+	// The sysutil callback queue has to be drained once per frame. main()
+	// registers an exit callback but nothing ever pumped the queue, so system
+	// events -- above all the XMB's "please quit" request -- were never
+	// acknowledged. The system then force-terminates the process, which is why
+	// leaving the emulator took down the whole console. Every PSL1GHT sample
+	// pairs this call with the flip.
+	//
+	// flip() is the one choke point shared by all three renderers (the libgui
+	// menu, glN64_GX and mupen64_soft_gfx), so it covers every frame path.
+	sysUtilCheckCallback();
+
 	rsxFinish(context, 0);
 	if(!first_fb) waitflip();
 	else gcmResetFlipStatus();

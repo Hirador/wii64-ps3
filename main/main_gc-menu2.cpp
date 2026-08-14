@@ -88,7 +88,10 @@ extern "C" {
 
 int s, running;
 struct sockaddr_in server;
-#define TESTIP				"192.168.1.100"
+#ifndef WII64_DEBUG_IP
+#define WII64_DEBUG_IP			"192.168.1.100"
+#endif
+#define TESTIP				WII64_DEBUG_IP
 #define TESTPORT			18194
 
 
@@ -114,6 +117,13 @@ void sysutil_exit_callback(u64 status,u64 param,void *usrdata)
 	}
 }
 
+// Debug logging goes out as UDP to a hardcoded address on the original
+// author's LAN, and nothing in this project ever calls netInitialize(), so the
+// socket is used on an uninitialised stack. Left enabled it fires from the ROM
+// cache and texture loaders, where a sendto() to an unreachable host can stall
+// on address resolution. Compile with -DSHOW_DEBUG to turn it back on, and set
+// WII64_DEBUG_IP to wherever you are listening.
+#ifdef SHOW_DEBUG
 void udp_setup()
 {
 	s = socket(PF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -123,10 +133,14 @@ void udp_setup()
 	inet_pton(AF_INET, TESTIP, &server.sin_addr);
 	server.sin_port = htons(TESTPORT);
 }
+#else
+void udp_setup() { }
+#endif
 
 extern "C" {
 void dbg_printf(const char *fmt,...)
 {
+#ifdef SHOW_DEBUG
 	int len;
 	va_list args;
 	char str[1024];
@@ -134,8 +148,11 @@ void dbg_printf(const char *fmt,...)
 	va_start(args, fmt);
 	len = vsprintf(str,fmt,args);
 	va_end(args);
-	
+
 	sendto(s, str, len, 0, (struct sockaddr*)&server, sizeof(server));
+#else
+	(void)fmt;
+#endif
 }
 }
 
@@ -249,6 +266,7 @@ int main(int argc, char* argv[]){
 
 	init_screen(host_addr,HOST_SIZE);
 	ioPadInit(7);
+	fileBrowser_ps3_resolveUsbRoot();
 	setRenderTarget(curr_fb);
 	atexit(program_exit_callback);
 	sysUtilRegisterCallback(0,sysutil_exit_callback,NULL);

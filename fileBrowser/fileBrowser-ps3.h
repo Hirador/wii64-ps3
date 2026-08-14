@@ -29,6 +29,10 @@
 extern fileBrowser_file topLevel_ps3_Default;  //PS3 USB
 extern fileBrowser_file saveDir_ps3_Default;   //PS3 USB
 
+/* Point the two defaults above at whichever /dev_usbNNN holds a wii64
+   directory. Call once at startup, before the menu reads them. */
+void fileBrowser_ps3_resolveUsbRoot(void);
+
 int fileBrowser_ps3_readDir(fileBrowser_file*, fileBrowser_file**);
 int fileBrowser_ps3_readFile(fileBrowser_file*, void*, unsigned int);
 int fileBrowser_ps3_writeFile(fileBrowser_file*, void*, unsigned int);
