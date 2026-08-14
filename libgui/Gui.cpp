@@ -18,6 +18,15 @@
  *
 **/
 
+#ifdef WII64_FRAME_PROFILE
+#include <stdio.h>
+#include <sys/systime.h>
+extern "C" {
+#include "../fileBrowser/fileBrowser.h"
+#include "../fileBrowser/fileBrowser-ps3.h"
+}
+#endif
+
 #include "Gui.h"
 #include "IPLFont.h"
 #include "InputManager.h"
@@ -72,25 +81,77 @@ void Gui::removeFrame(Frame *frame)
 	frameList.erase(std::remove(frameList.begin(),frameList.end(),frame),frameList.end());
 }
 
+#ifdef WII64_FRAME_PROFILE
+// Per-phase frame timing, dumped to <usb>/wii64/timing.log after
+// WII64_PROFILE_FRAMES frames. Samples are buffered in memory because writing
+// to USB every frame would dominate what we are trying to measure. Raw
+// timebase ticks are recorded and the timebase frequency is written into the
+// header, so the log can be converted exactly rather than assuming a clock.
+#define WII64_PROFILE_FRAMES 60
+
+static inline unsigned int prof_tick(void)
+{
+	unsigned int r;
+	__asm__ __volatile__ ("mftb %0" : "=r" (r));
+	return r;
+}
+
+static unsigned int profSamples[WII64_PROFILE_FRAMES][10];
+static int  profFrame   = 0;
+static bool profWritten = false;
+
+extern "C" {
+extern unsigned int profWaitIters;     // waitflip() poll iterations
+extern unsigned int profSysUtilTicks;  // time inside sysUtilCheckCallback
+extern unsigned int profLabelTicks;    // RSX label round trip, no flip involved
+extern unsigned int profLabelIters;
+extern unsigned int profVideoInfo[6];  // w, h, resolution, aspect, refresh, state
+extern unsigned int profCtrl[6];       // RSX put/get/ref around the stall
+}
+#endif
+
 void Gui::draw()
 {
 //	gfx->setDepth(0.0);
 //	dbg_printf("Gui draw\r\n");
 //	printf("Gui draw\n");
+#ifdef WII64_FRAME_PROFILE
+	unsigned int t0 = prof_tick();
+#endif
 	Input::getInstance().refreshInput();
 	Cursor::getInstance().updateCursor();
 	Focus::getInstance().updateFocus();
 	if(padAutoAssign) auto_assign_controllers(); //for gc_input
+#ifdef WII64_FRAME_PROFILE
+	unsigned int t1 = prof_tick();
+#endif
 	//Update time??
 	//Get graphics framework and pass to Frame draw fns?
 	gfx->drawInit();
+#ifdef WII64_FRAME_PROFILE
+	unsigned int t2 = prof_tick();
+#endif
 	drawBackground();
+#ifdef WII64_FRAME_PROFILE
+	unsigned int t3 = prof_tick();
+#endif
 	FrameList::const_iterator iteration;
 	for (iteration = frameList.begin(); iteration != frameList.end(); iteration++)
 	{
 		(*iteration)->updateTime(0.0f); //TODO: Pass deltaTime
 		(*iteration)->drawChildren(*gfx);
 	}
+#ifdef WII64_FRAME_PROFILE
+	unsigned int t4 = prof_tick();
+	if(profFrame < WII64_PROFILE_FRAMES){
+		profSamples[profFrame][0] = t0;
+		profSamples[profFrame][1] = t1 - t0;   // input + cursor + focus + pad assign
+		profSamples[profFrame][2] = t2 - t1;   // gfx->drawInit
+		profSamples[profFrame][3] = t3 - t2;   // background
+		profSamples[profFrame][4] = t4 - t3;   // all frames / children
+		profSamples[profFrame][5] = 0;         // filled in after swapBuffers
+	}
+#endif
 //	menuLogo->drawComponent(*gfx);
 	menuLogo->draw(*gfx);
 	if (MessageBox::getInstance().getActive()) MessageBox::getInstance().drawMessageBox(*gfx);
@@ -140,7 +201,47 @@ void Gui::draw()
 		fade = fade +increment > 255 ? 255 : fade + increment;
 	}
 
+#ifdef WII64_FRAME_PROFILE
+	unsigned int t5 = prof_tick();
+#endif
 	gfx->swapBuffers();
+#ifdef WII64_FRAME_PROFILE
+	unsigned int t6 = prof_tick();
+	if(profFrame < WII64_PROFILE_FRAMES){
+		profSamples[profFrame][5] = t6 - t5;   // swapBuffers -> flip -> waitflip
+		profSamples[profFrame][6] = profWaitIters;
+		profSamples[profFrame][7] = profSysUtilTicks;
+		profSamples[profFrame][8] = profLabelTicks;
+		profSamples[profFrame][9] = profLabelIters;
+		++profFrame;
+	} else if(!profWritten){
+		profWritten = true;
+		char path[FILE_BROWSER_MAX_PATH_LEN];
+		snprintf(path, sizeof(path), "%s/timing.log", wii64_usb_root);
+		FILE* lf = fopen(path, "w");
+		if(lf){
+			fprintf(lf, "timebase_hz=%llu\n",
+			        (unsigned long long)sysGetTimebaseFrequency());
+			fprintf(lf, "video w=%u h=%u res=%u aspect=%u refresh=0x%x state=%u\n",
+			        profVideoInfo[0], profVideoInfo[1], profVideoInfo[2],
+			        profVideoInfo[3], profVideoInfo[4], profVideoInfo[5]);
+			fprintf(lf, "rsx put=%u get=%u ref=%u get@200=%u put_end=%u get_end=%u\n",
+			        profCtrl[0], profCtrl[1], profCtrl[2],
+			        profCtrl[3], profCtrl[4], profCtrl[5]);
+			fprintf(lf, "frame total input drawInit background frames swap waitIters sysUtil labelTicks labelIters\n");
+			for(int i = 1; i < WII64_PROFILE_FRAMES; ++i){
+				unsigned int total = profSamples[i][0] - profSamples[i-1][0];
+				fprintf(lf, "%d %u %u %u %u %u %u %u %u %u %u\n", i, total,
+				        profSamples[i][1], profSamples[i][2],
+				        profSamples[i][3], profSamples[i][4],
+				        profSamples[i][5], profSamples[i][6],
+				        profSamples[i][7], profSamples[i][8],
+				        profSamples[i][9]);
+			}
+			fclose(lf);
+		}
+	}
+#endif
 }
 
 void Gui::drawBackground()
