@@ -33,19 +33,48 @@
 #include <sys/stat.h>
 #include "fileBrowser.h"
 
+// These were "/dev_usb/wii64/...", which is not a mount point the PS3 ever
+// creates -- USB mass storage appears as /dev_usb000, /dev_usb001 and so on.
+// opendir() therefore always failed and the ROM browser came up empty.
+// fileBrowser_ps3_resolveUsbRoot() rewrites both at startup to whichever
+// /dev_usbNNN actually holds a wii64 directory; these literals are only the
+// fallback when no stick is present.
 fileBrowser_file topLevel_ps3_Default =
-	{ "/dev_usb/wii64/roms", // file name
+	{ "/dev_usb000/wii64/roms", // file name
 	  0, // offset
 	  0, // size
 	  FILE_BROWSER_ATTR_DIR
 	 };
-	 
+
 fileBrowser_file saveDir_ps3_Default =
-	{ "/dev_usb/wii64/saves",
+	{ "/dev_usb000/wii64/saves",
 	  0,
 	  0,
 	  FILE_BROWSER_ATTR_DIR
 	 };
+
+// Pick the first /dev_usbNNN that contains a wii64 directory. PS3 numbering is
+// not dense -- a single stick can appear as /dev_usb001 with no /dev_usb000
+// present -- so probing each slot is necessary rather than assuming 000.
+void fileBrowser_ps3_resolveUsbRoot(void)
+{
+	char probe[FILE_BROWSER_MAX_PATH_LEN];
+	struct stat st;
+	int i;
+
+	for(i = 0; i < 8; ++i){
+		snprintf(probe, sizeof(probe), "/dev_usb%03d/wii64", i);
+		if(stat(probe, &st) == 0 && S_ISDIR(st.st_mode)){
+			snprintf(topLevel_ps3_Default.name,
+			         sizeof(topLevel_ps3_Default.name),
+			         "/dev_usb%03d/wii64/roms", i);
+			snprintf(saveDir_ps3_Default.name,
+			         sizeof(saveDir_ps3_Default.name),
+			         "/dev_usb%03d/wii64/saves", i);
+			return;
+		}
+	}
+}
 	 
  
 
