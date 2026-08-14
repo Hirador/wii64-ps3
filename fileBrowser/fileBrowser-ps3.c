@@ -53,6 +53,10 @@ fileBrowser_file saveDir_ps3_Default =
 	  FILE_BROWSER_ATTR_DIR
 	 };
 
+// Resolved wii64 directory, for callers that need to build their own paths
+// (the config files sit next to roms/ and saves/ rather than inside them).
+char wii64_usb_root[FILE_BROWSER_MAX_PATH_LEN] = "/dev_usb000/wii64";
+
 // Pick the first /dev_usbNNN that contains a wii64 directory. PS3 numbering is
 // not dense -- a single stick can appear as /dev_usb001 with no /dev_usb000
 // present -- so probing each slot is necessary rather than assuming 000.
@@ -65,12 +69,14 @@ void fileBrowser_ps3_resolveUsbRoot(void)
 	for(i = 0; i < 8; ++i){
 		snprintf(probe, sizeof(probe), "/dev_usb%03d/wii64", i);
 		if(stat(probe, &st) == 0 && S_ISDIR(st.st_mode)){
+			snprintf(wii64_usb_root, sizeof(wii64_usb_root),
+			         "/dev_usb%03d/wii64", i);
 			snprintf(topLevel_ps3_Default.name,
 			         sizeof(topLevel_ps3_Default.name),
-			         "/dev_usb%03d/wii64/roms", i);
+			         "%s/roms", wii64_usb_root);
 			snprintf(saveDir_ps3_Default.name,
 			         sizeof(saveDir_ps3_Default.name),
-			         "/dev_usb%03d/wii64/saves", i);
+			         "%s/saves", wii64_usb_root);
 			return;
 		}
 	}

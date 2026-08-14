@@ -33,6 +33,10 @@ extern fileBrowser_file saveDir_ps3_Default;   //PS3 USB
    directory. Call once at startup, before the menu reads them. */
 void fileBrowser_ps3_resolveUsbRoot(void);
 
+/* Resolved wii64 directory, e.g. "/dev_usb000/wii64". Config files live here,
+   alongside roms/ and saves/ rather than inside them. */
+extern char wii64_usb_root[FILE_BROWSER_MAX_PATH_LEN];
+
 int fileBrowser_ps3_readDir(fileBrowser_file*, fileBrowser_file**);
 int fileBrowser_ps3_readFile(fileBrowser_file*, void*, unsigned int);
 int fileBrowser_ps3_writeFile(fileBrowser_file*, void*, unsigned int);

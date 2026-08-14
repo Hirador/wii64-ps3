@@ -135,9 +135,12 @@ export OUTPUT	:=	$(CURDIR)/$(TARGET)
 .PHONY: $(BUILD) clean pkg
 
 #---------------------------------------------------------------------------------
+# The '+' prefix and $(MAKE) hand the jobserver down to the sub-make; with a
+# bare `make` it printed "jobserver unavailable: using -j1" and built serially
+# however high -j was set.
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
-	@make --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.ps3
+	+@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile.ps3
 
 #---------------------------------------------------------------------------------
 clean:
