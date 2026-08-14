@@ -1,0 +1,11 @@
+# Build output
+build/
+*.elf
+*.self
+*.pkg
+*.map
+*.vpo
+*.fpo
+
+# macOS
+.DS_Store
