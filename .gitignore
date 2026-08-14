@@ -1,7 +1,16 @@
-build/combined_shader_fpo.h
-build/combined_shader_vpo.h
+# Build output
+build/
 *.o
 *.d
-*.self
-*.map
 *.elf
+*.self
+*.pkg
+*.map
+*.vpo
+*.fpo
+
+# Hardware test logs
+logs/
+
+# macOS
+.DS_Store
