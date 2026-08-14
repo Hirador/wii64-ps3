@@ -650,7 +650,9 @@ void Func_SaveSettingsUSB()
 	int num_written = 0;
 	configFile_file = &saveDir_ps3_Default;
 	if(configFile_init(configFile_file)) {                //only if device initialized ok
-		FILE* f = fopen( "/dev_usb/wii64/settings.cfg", "wb" ); //attempt to open file
+		char cfgPath[FILE_BROWSER_MAX_PATH_LEN];
+		snprintf(cfgPath, sizeof(cfgPath), "%s/settings.cfg", wii64_usb_root);
+		FILE* f = fopen( cfgPath, "wb" ); //attempt to open file
 #else //PS3
 	int (*configFile_init)(fileBrowser_file*) = fileBrowser_libfat_init;
 	int num_written = 0;
@@ -847,7 +849,9 @@ void Func_SaveButtonsUSB()
 	int num_written = 0;
 	configFile_file = &saveDir_ps3_Default;
 	if(configFile_init(configFile_file)) {                //only if device initialized ok
-		FILE* f = fopen( "/dev_usb/wii64/controlP.cfg", "wb" );  //attempt to open file
+		char cfgPath[FILE_BROWSER_MAX_PATH_LEN];
+		snprintf(cfgPath, sizeof(cfgPath), "%s/controlP.cfg", wii64_usb_root);
+		FILE* f = fopen( cfgPath, "wb" );  //attempt to open file
 		if(f) {
 			save_configurations(f, &controller_PS3);					//write out GC controller mappings
 			fclose(f);

@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <malloc.h>
+#include <sys/process.h>
 #include "../menu/MenuContext.h"
 #include "../libgui/MessageBox.h"
 #include "timers.h"
@@ -74,6 +75,19 @@ extern "C" {
 
 int s, running;
 struct sockaddr_in server;
+// Tell the loader what to give the primary PPU thread. Without this the
+// .sys_proc_param section is absent and the thread is created with a default
+// priority high enough to starve the system's own threads. The menu loop is a
+// hot poll -- while(menu->isRunning() && running){} with usleep-based spins in
+// waitflip() -- so at that priority it monopolises the PPU: the XMB itself
+// crawls, the pad service stops responding to input, and sysutil cannot be
+// serviced, so quitting takes the console down.
+//
+// 1001 is the priority every PSL1GHT graphics sample uses (lower numbers are
+// higher priority, so this sits well below the system's threads). 1MB of stack
+// matches those samples.
+SYS_PROCESS_PARAM(1001, 0x100000);
+
 #ifndef WII64_DEBUG_IP
 #define WII64_DEBUG_IP			"192.168.1.100"
 #endif
@@ -314,12 +328,15 @@ int main(int argc, char* argv[]){
 	int (*configFile_init)(fileBrowser_file*) = fileBrowser_ps3_init;
 	configFile_file = &saveDir_ps3_Default;
 	if(configFile_init(configFile_file)) {                //only if device initialized ok
-		FILE* f = fopen( "/dev_usb/wii64/settings.cfg", "r" );  //attempt to open file
+		char cfgPath[FILE_BROWSER_MAX_PATH_LEN];
+		snprintf(cfgPath, sizeof(cfgPath), "%s/settings.cfg", wii64_usb_root);
+		FILE* f = fopen( cfgPath, "r" );  //attempt to open file
 		if(f) {        //open ok, read it
 			readConfig(f);
 			fclose(f);
 		}
-		f = fopen( "/dev_usb/wii64/controlP.cfg", "r" );  //attempt to open file
+		snprintf(cfgPath, sizeof(cfgPath), "%s/controlP.cfg", wii64_usb_root);
+		f = fopen( cfgPath, "r" );  //attempt to open file
 		if(f) {
 			load_configurations(f, &controller_PS3);					//read in GC controller mappings
 			fclose(f);
