@@ -53,6 +53,7 @@ extern "C" {
 #include "wii64config.h"
 #include "../fileBrowser/fileBrowser.h"
 #include "../fileBrowser/fileBrowser-ps3.h"
+#include "../r4300/ExecMem-PS3.h"
 }
 
 #include <stdio.h>
@@ -281,6 +282,15 @@ int main(int argc, char* argv[]){
 	init_screen(host_addr,HOST_SIZE);
 	ioPadInit(7);
 	fileBrowser_ps3_resolveUsbRoot();
+	{
+		// Answers whether PS3MAPI hands back genuinely executable memory,
+		// before the recompiler is ever involved. Writes <usb>/wii64/execmem.log
+		// step by step so a lock-up still leaves evidence of how far it got.
+		char selfTestLog[FILE_BROWSER_MAX_PATH_LEN];
+		snprintf(selfTestLog, sizeof(selfTestLog), "%s/execmem.log",
+		         wii64_usb_root);
+		ExecMem_SelfTest(selfTestLog);
+	}
 	setRenderTarget(curr_fb);
 	atexit(program_exit_callback);
 	sysUtilRegisterCallback(0,sysutil_exit_callback,NULL);

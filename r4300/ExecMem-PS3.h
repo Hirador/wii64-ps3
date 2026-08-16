@@ -40,6 +40,16 @@ void  ExecMem_Free(void* ptr);
    before ExecMem_Alloc to decide whether to offer the dynarec at all. */
 int   ExecMem_Available(void);
 
+/* Self-test: allocate a page, write a single `blr` into it, flush the caches
+   and call it. Answers the one question the dynarec cannot -- whether memory
+   from ExecMem_Alloc is genuinely executable -- without involving the
+   recompiler at all.
+
+   Writes its progress to `logPath` line by line, flushing after each step, so
+   that if the call locks the console the log still shows exactly how far it
+   reached. Returns 0 if the call returned normally. */
+int   ExecMem_SelfTest(const char* logPath);
+
 #ifdef __cplusplus
 }
 #endif
