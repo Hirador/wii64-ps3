@@ -464,27 +464,30 @@ void IplFont::drawInit(GXColor fontColor)
 
 	//Reset params from gfx plugin (TODO..)
 
-	//init_shader
-	if (fp_buffer)
-		rsxFree(fp_buffer);
+	// init_shader, once. drawInit runs every frame, but the shader comes from
+	// a blob linked into the executable, so nothing it produces can change
+	// between frames -- and every result below is a member that outlives the
+	// call. Re-running it meant a rsxFree/rsxMemalign pair per frame against
+	// RSX local memory the GPU may still be reading from the frame in flight.
+	if (!fp_buffer) {
+		vpo = (rsxVertexProgram*)combined_shader_vpo;
+		fpo = (rsxFragmentProgram*)combined_shader_fpo;
 
-	vpo = (rsxVertexProgram*)combined_shader_vpo;
-	fpo = (rsxFragmentProgram*)combined_shader_fpo;
+		rsxVertexProgramGetUCode(vpo,&vp_ucode,&vpsize);
+		projMatrix_id = rsxVertexProgramGetConst(vpo,"projMatrix");
+		modelViewMatrix_id = rsxVertexProgramGetConst(vpo,"modelViewMatrix");
+		vertexPosition_id = rsxVertexProgramGetAttrib(vpo,"vertexPosition");
+		vertexColor0_id = rsxVertexProgramGetAttrib(vpo,"vertexColor");
+		vertexTexcoord_id = rsxVertexProgramGetAttrib(vpo,"vertexTexcoord");
 
-	rsxVertexProgramGetUCode(vpo,&vp_ucode,&vpsize);
-	projMatrix_id = rsxVertexProgramGetConst(vpo,"projMatrix");
-	modelViewMatrix_id = rsxVertexProgramGetConst(vpo,"modelViewMatrix");
-	vertexPosition_id = rsxVertexProgramGetAttrib(vpo,"vertexPosition");
-	vertexColor0_id = rsxVertexProgramGetAttrib(vpo,"vertexColor");
-	vertexTexcoord_id = rsxVertexProgramGetAttrib(vpo,"vertexTexcoord");
+		rsxFragmentProgramGetUCode(fpo,&fp_ucode,&fpsize);
+		fp_buffer = (u32*)rsxMemalign(64,fpsize);
+		memcpy(fp_buffer,fp_ucode,fpsize);
+		rsxAddressToOffset(fp_buffer,&fp_offset);
 
-	rsxFragmentProgramGetUCode(fpo,&fp_ucode,&fpsize);
-	fp_buffer = (u32*)rsxMemalign(64,fpsize);
-	memcpy(fp_buffer,fp_ucode,fpsize);
-	rsxAddressToOffset(fp_buffer,&fp_offset);
-
-	mode_id = rsxFragmentProgramGetConst(fpo,"mode");
-	textureUnit_id = rsxFragmentProgramGetAttrib(fpo,"texture");
+		mode_id = rsxFragmentProgramGetConst(fpo,"mode");
+		textureUnit_id = rsxFragmentProgramGetAttrib(fpo,"texture");
+	}
 
 	//Init font texture
 	rsxInvalidateTextureCache(context,GCM_INVALIDATE_TEXTURE);
