@@ -5,6 +5,7 @@
  */
 
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <ppu-lv2.h>
 #include <sys/process.h>
@@ -96,6 +97,74 @@ void* ExecMem_Alloc(unsigned int size)
 
 	execBlocks[slot].addr = (void*)(uint32_t)execBlocks[slot].table[0];
 	return execBlocks[slot].addr;
+}
+
+/* Cache maintenance. Code written through the data cache is invisible to the
+   instruction fetcher until the data line is flushed to memory and the stale
+   instruction line is thrown away, so both are required before calling into
+   freshly written memory. */
+static void execmem_flush(void* addr, unsigned int len)
+{
+	unsigned char* p   = (unsigned char*)addr;
+	unsigned char* end = p + len;
+
+	for(; p < end; p += 32)
+		__asm__ __volatile__ ("dcbf 0,%0" : : "r" (p) : "memory");
+	__asm__ __volatile__ ("sync");
+
+	for(p = (unsigned char*)addr; p < end; p += 32)
+		__asm__ __volatile__ ("icbi 0,%0" : : "r" (p) : "memory");
+	__asm__ __volatile__ ("sync");
+	__asm__ __volatile__ ("isync");
+}
+
+int ExecMem_SelfTest(const char* logPath)
+{
+	FILE* lf = fopen(logPath, "w");
+	void* mem;
+	int   version;
+
+	if(!lf) return -1;
+
+	version = ps3mapi_get_core_version();
+	fprintf(lf, "ps3mapi core version: 0x%04x (need >= 0x%04x)\n",
+	        version, PS3MAPI_CORE_MINVERSION);
+	fflush(lf);
+
+	if(version < PS3MAPI_CORE_MINVERSION){
+		fprintf(lf, "RESULT: ps3mapi unavailable, dynarec cannot work here\n");
+		fclose(lf);
+		return -1;
+	}
+
+	mem = ExecMem_Alloc(4096);
+	fprintf(lf, "ExecMem_Alloc(4096) -> %p\n", mem);
+	fflush(lf);
+
+	if(!mem){
+		fprintf(lf, "RESULT: allocation failed\n");
+		fclose(lf);
+		return -1;
+	}
+
+	/* A single blr: return immediately to the caller. If executable memory
+	   works this is the most trivial possible call. */
+	*(unsigned int*)mem = 0x4E800020;
+	execmem_flush(mem, 4);
+	fprintf(lf, "wrote blr, caches flushed; about to call\n");
+	fprintf(lf, "  (if the log stops here, the memory is NOT executable)\n");
+	fflush(lf);
+
+	((void (*)(void))mem)();
+
+	fprintf(lf, "call returned normally\n");
+	fprintf(lf, "RESULT: executable memory WORKS\n");
+	fflush(lf);
+
+	ExecMem_Free(mem);
+	fprintf(lf, "freed ok\n");
+	fclose(lf);
+	return 0;
 }
 
 void ExecMem_Free(void* ptr)
