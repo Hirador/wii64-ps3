@@ -282,14 +282,38 @@ int main(int argc, char* argv[]){
 	init_screen(host_addr,HOST_SIZE);
 	ioPadInit(7);
 	fileBrowser_ps3_resolveUsbRoot();
+	// Everything PS3MAPI is opt-in, because page_allocate does not fail
+	// politely: a request lv2 dislikes hangs the console hard enough to need a
+	// power cycle. Neither of these paths is reached unless a marker file is
+	// present on the USB stick, so an ordinary boot never touches syscall 8.
 	{
-		// Answers whether PS3MAPI hands back genuinely executable memory,
-		// before the recompiler is ever involved. Writes <usb>/wii64/execmem.log
-		// step by step so a lock-up still leaves evidence of how far it got.
-		char selfTestLog[FILE_BROWSER_MAX_PATH_LEN];
-		snprintf(selfTestLog, sizeof(selfTestLog), "%s/execmem.log",
+		char markerPath[FILE_BROWSER_MAX_PATH_LEN];
+		FILE* marker;
+
+		// <usb>/wii64/execmem_test -- run one step of the executable-memory
+		// probe and append the result to <usb>/wii64/execmem.log. One
+		// combination per boot; see ExecMem_SelfTest.
+		snprintf(markerPath, sizeof(markerPath), "%s/execmem_test",
 		         wii64_usb_root);
-		ExecMem_SelfTest(selfTestLog);
+		marker = fopen(markerPath, "r");
+		if(marker){
+			char logPath[FILE_BROWSER_MAX_PATH_LEN];
+			fclose(marker);
+			snprintf(logPath, sizeof(logPath), "%s/execmem.log",
+			         wii64_usb_root);
+			ExecMem_SelfTest(logPath);
+		}
+
+		// <usb>/wii64/dynarec_enable -- let the recompiler ask for executable
+		// memory. Without it ExecMem_Alloc returns NULL, RecompCache_Init
+		// fails, and go() falls back to the interpreter.
+		snprintf(markerPath, sizeof(markerPath), "%s/dynarec_enable",
+		         wii64_usb_root);
+		marker = fopen(markerPath, "r");
+		if(marker){
+			fclose(marker);
+			ExecMem_SetEnabled(1);
+		}
 	}
 	setRenderTarget(curr_fb);
 	atexit(program_exit_callback);

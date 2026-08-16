@@ -28,8 +28,15 @@
 extern "C" {
 #endif
 
+/* Arm the allocator. It is disabled until this is called with a non-zero
+   argument, and ExecMem_Alloc just returns NULL. page_allocate is not a call
+   that fails politely -- a request lv2 dislikes hangs the console hard enough
+   to need a power cycle -- so nothing may reach it on an ordinary boot. */
+void  ExecMem_SetEnabled(int enabled);
+
 /* Allocate `size` bytes of readable, writable and executable memory.
-   Returns NULL if PS3MAPI is missing or the allocation fails. */
+   Returns NULL if the allocator is disabled, PS3MAPI is missing, or the
+   allocation fails. */
 void* ExecMem_Alloc(unsigned int size);
 
 /* Release a block obtained from ExecMem_Alloc. */
@@ -40,14 +47,17 @@ void  ExecMem_Free(void* ptr);
    before ExecMem_Alloc to decide whether to offer the dynarec at all. */
 int   ExecMem_Available(void);
 
-/* Self-test: allocate a page, write a single `blr` into it, flush the caches
-   and call it. Answers the one question the dynarec cannot -- whether memory
-   from ExecMem_Alloc is genuinely executable -- without involving the
-   recompiler at all.
+/* Probe whether PS3MAPI will hand back memory that can actually be executed,
+   without involving the recompiler at all.
 
-   Writes its progress to `logPath` line by line, flushing after each step, so
-   that if the call locks the console the log still shows exactly how far it
-   reached. Returns 0 if the call returned normally. */
+   A bad page_allocate does not report an error, it hangs lv2, so the parameter
+   combinations cannot be swept inside one run. Each call tries exactly one and
+   appends the result to `logPath`, flushing before the dangerous step; the
+   next call reads back how many were already attempted and resumes past them.
+   So the sweep costs one boot per combination, and a hang still leaves a log
+   naming the combination that caused it. Delete the log to start over.
+
+   Returns 0 if this run's combination worked. */
 int   ExecMem_SelfTest(const char* logPath);
 
 #ifdef __cplusplus

@@ -20,7 +20,13 @@
 #define PS3MAPI_OPCODE_PROC_PAGE_FREE       0x0034
 #define PS3MAPI_CORE_MINVERSION             0x0120
 
-/* Page size selector understood by lv2's page_allocate. */
+/* Page size selectors understood by lv2's page_allocate. Zero is not a size at
+   all -- ps3mapi branches on it and calls page_allocate_auto instead, which is
+   what the payload itself uses everywhere. Asking for a size smaller than the
+   page size is not a combination anything in the payload ever performs. */
+#define PS3MAPI_PAGE_SIZE_AUTO              0x000
+#define PS3MAPI_PAGE_SIZE_4K                0x100
+#define PS3MAPI_PAGE_SIZE_64K               0x200
 #define PS3MAPI_PAGE_SIZE_1M                0x400
 
 /* Allocation flags. 0x2F is what the payload itself passes for every
@@ -37,6 +43,16 @@ typedef struct {
 } ExecBlock;
 
 static ExecBlock execBlocks[MAX_EXEC_BLOCKS];
+
+/* Off unless something deliberately turns it on. page_allocate is not a call
+   that fails politely: a bad request takes lv2 down with it and the console
+   has to be power-cycled, so it must never be reached on an ordinary boot. */
+static int execMemEnabled = 0;
+
+void ExecMem_SetEnabled(int enabled)
+{
+	execMemEnabled = enabled;
+}
 
 static int ps3mapi_get_core_version(void)
 {
@@ -73,6 +89,8 @@ void* ExecMem_Alloc(unsigned int size)
 {
 	int i, slot = -1;
 
+	if(!execMemEnabled) return NULL;
+
 	for(i = 0; i < MAX_EXEC_BLOCKS; ++i){
 		if(!execBlocks[i].addr){ slot = i; break; }
 	}
@@ -84,7 +102,7 @@ void* ExecMem_Alloc(unsigned int size)
 	execBlocks[slot].table[1] = 0;
 
 	if(ps3mapi_page_allocate(sysProcessGetPid(), (uint64_t)size,
-	                         PS3MAPI_PAGE_SIZE_1M, PS3MAPI_PAGE_FLAGS,
+	                         PS3MAPI_PAGE_SIZE_AUTO, PS3MAPI_PAGE_FLAGS,
 	                         1 /* is_executable */,
 	                         execBlocks[slot].table) != 0){
 		return NULL;
@@ -118,51 +136,122 @@ static void execmem_flush(void* addr, unsigned int len)
 	__asm__ __volatile__ ("isync");
 }
 
+/* The probe sweep. A bad page_allocate does not return an error, it takes lv2
+   down and costs a power cycle, so the parameters cannot be explored within a
+   single run. Each entry is tried on its own boot instead, and the log records
+   which ones have already been attempted so the next boot resumes past them.
+
+   Ordered so the cheapest diagnosis comes first. Case 0 asks for ordinary
+   non-executable memory: if even that hangs, page_allocate itself is unusable
+   here and the executable flag is irrelevant. */
+static const struct {
+	const char*  what;
+	unsigned int size;
+	uint64_t     pageSize;
+	uint64_t     executable;
+} probes[] = {
+	{ "1M, page_size=auto, non-executable (control)", 0x100000, PS3MAPI_PAGE_SIZE_AUTO, 0 },
+	{ "1M, page_size=auto, executable",               0x100000, PS3MAPI_PAGE_SIZE_AUTO, 1 },
+	{ "1M, page_size=1M, executable",                 0x100000, PS3MAPI_PAGE_SIZE_1M,   1 },
+	{ "64K, page_size=auto, executable",              0x010000, PS3MAPI_PAGE_SIZE_AUTO, 1 },
+	{ "64K, page_size=64K, executable",               0x010000, PS3MAPI_PAGE_SIZE_64K,  1 },
+};
+#define NUM_PROBES ((int)(sizeof(probes)/sizeof(probes[0])))
+
+/* How many probes previous boots already started, counted from the log. */
+static int probes_already_attempted(const char* logPath)
+{
+	FILE* lf = fopen(logPath, "r");
+	char  line[256];
+	int   n = 0;
+
+	if(!lf) return 0;
+	while(fgets(line, sizeof(line), lf))
+		if(!strncmp(line, "ATTEMPT ", 8)) ++n;
+	fclose(lf);
+	return n;
+}
+
 int ExecMem_SelfTest(const char* logPath)
 {
-	FILE* lf = fopen(logPath, "w");
-	void* mem;
-	int   version;
+	FILE*    lf;
+	uint64_t table[2];
+	void*    mem;
+	int      version, idx, ret;
 
+	idx = probes_already_attempted(logPath);
+
+	lf = fopen(logPath, "a");
 	if(!lf) return -1;
 
-	version = ps3mapi_get_core_version();
-	fprintf(lf, "ps3mapi core version: 0x%04x (need >= 0x%04x)\n",
-	        version, PS3MAPI_CORE_MINVERSION);
-	fflush(lf);
+	if(idx == 0){
+		version = ps3mapi_get_core_version();
+		fprintf(lf, "ps3mapi core version: 0x%04x (need >= 0x%04x)\n",
+		        version, PS3MAPI_CORE_MINVERSION);
+		fflush(lf);
 
-	if(version < PS3MAPI_CORE_MINVERSION){
-		fprintf(lf, "RESULT: ps3mapi unavailable, dynarec cannot work here\n");
+		if(version < PS3MAPI_CORE_MINVERSION){
+			fprintf(lf, "RESULT: ps3mapi unavailable, dynarec cannot work here\n");
+			fclose(lf);
+			return -1;
+		}
+	}
+
+	if(idx >= NUM_PROBES){
+		fprintf(lf, "all %d probes attempted; delete this log to run them again\n",
+		        NUM_PROBES);
 		fclose(lf);
 		return -1;
 	}
 
-	mem = ExecMem_Alloc(4096);
-	fprintf(lf, "ExecMem_Alloc(4096) -> %p\n", mem);
+	/* Written before the call, and flushed, so that a hang still says which
+	   combination caused it. */
+	fprintf(lf, "ATTEMPT %d: %s\n", idx, probes[idx].what);
+	fprintf(lf, "  (if the log stops here, this combination hung lv2)\n");
 	fflush(lf);
 
-	if(!mem){
-		fprintf(lf, "RESULT: allocation failed\n");
+	table[0] = table[1] = 0;
+	ret = ps3mapi_page_allocate(sysProcessGetPid(), (uint64_t)probes[idx].size,
+	                            probes[idx].pageSize, PS3MAPI_PAGE_FLAGS,
+	                            probes[idx].executable, table);
+
+	fprintf(lf, "  returned %d, page_table = { 0x%llx, 0x%llx }\n",
+	        ret, (unsigned long long)table[0], (unsigned long long)table[1]);
+	fflush(lf);
+
+	if(ret != 0 || table[0] == 0){
+		fprintf(lf, "  allocation failed, but survived -- next boot tries probe %d\n",
+		        idx + 1);
 		fclose(lf);
 		return -1;
 	}
 
-	/* A single blr: return immediately to the caller. If executable memory
-	   works this is the most trivial possible call. */
-	*(unsigned int*)mem = 0x4E800020;
-	execmem_flush(mem, 4);
-	fprintf(lf, "wrote blr, caches flushed; about to call\n");
-	fprintf(lf, "  (if the log stops here, the memory is NOT executable)\n");
+	mem = (void*)(uint32_t)table[0];
+
+	if(!probes[idx].executable){
+		/* Control case. Only prove the mapping is writable; calling into
+		   memory that was never asked to be executable proves nothing. */
+		*(volatile unsigned int*)mem = 0x12345678;
+		fprintf(lf, "  wrote and read back 0x%08x\n",
+		        *(volatile unsigned int*)mem);
+		fprintf(lf, "  RESULT: page_allocate itself works\n");
+	} else {
+		/* A single blr: return immediately to the caller. If executable
+		   memory works this is the most trivial possible call. */
+		*(unsigned int*)mem = 0x4E800020;
+		execmem_flush(mem, 4);
+		fprintf(lf, "  wrote blr, caches flushed; about to call\n");
+		fprintf(lf, "  (if the log stops here, the memory is NOT executable)\n");
+		fflush(lf);
+
+		((void (*)(void))mem)();
+
+		fprintf(lf, "  RESULT: executable memory WORKS with this combination\n");
+	}
 	fflush(lf);
 
-	((void (*)(void))mem)();
-
-	fprintf(lf, "call returned normally\n");
-	fprintf(lf, "RESULT: executable memory WORKS\n");
-	fflush(lf);
-
-	ExecMem_Free(mem);
-	fprintf(lf, "freed ok\n");
+	ps3mapi_page_free(sysProcessGetPid(), PS3MAPI_PAGE_FLAGS, table);
+	fprintf(lf, "  freed ok\n");
 	fclose(lf);
 	return 0;
 }
