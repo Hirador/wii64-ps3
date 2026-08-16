@@ -30,7 +30,7 @@
 videoOutResolution res;
 gcmContextData *context = NULL;
 u32 *initialCommandBuffer;
-u32 commandBufferSize;
+u32 *commandBufferEnd;
 
 u32 curr_fb = 0;
 u32 first_fb = 1;
@@ -128,15 +128,23 @@ static void resetCommandBuffer()
 	
 	context->current = initialCommandBuffer;
 	context->begin   = initialCommandBuffer;
-	context->end     = context->begin + commandBufferSize;
+	context->end     = commandBufferEnd;
 }
 
 void init_screen(void *host_addr,u32 size)
 {
 	rsxInit(&context,CB_SIZE,size,host_addr);
 
+	// Remember where the command buffer starts and ends so resetCommandBuffer
+	// can restore both. The end has to be the pointer rsxInit established, not
+	// something recomputed from a size: the buffer is CB_SIZE (1MB) long, while
+	// `size` is the 32MB IO area it sits at the front of, and begin/end are u32*
+	// so adding a byte count overshoots by another factor of four. Recomputing
+	// it put the limit ~128MB past the buffer, so the callback that wraps it
+	// never fired. The menu survived that because it emits well under 1MB of
+	// commands per frame; a game frame does not.
 	initialCommandBuffer = context->current;
-	commandBufferSize = size;
+	commandBufferEnd = context->end;
 	videoOutState state;
 	videoOutGetState(0,0,&state);
 
